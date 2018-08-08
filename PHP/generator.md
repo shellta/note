@@ -39,3 +39,36 @@
     $y->send('4');
     $y->send('5');
 ```
+
+### 生成器返回值
+如果生成器遇到 return 或着被迭代完成，这个生成器是会有一个返回值的。  
+有两种方法可以获取到这种返回值  
+* $result = Generator::getReturn();
+* $result = yield from Generator();
+
+例如：
+``` php
+function x() {
+    for ($i=0; $i < 10; $i++) {
+        echo $i, PHP_EOL;
+        yield;
+    }
+
+    return '=> '. $i . PHP_EOL;
+}
+
+function y() {
+    $a = yield from x();
+    echo $a;
+
+    $b = x();
+    yield from $b;
+    echo $b->getReturn();
+}
+
+
+foreach (y() as $y) {
+}
+```
+
+
