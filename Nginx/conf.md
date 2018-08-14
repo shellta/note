@@ -312,3 +312,76 @@ rewrite语法
 * -d和!-d 判断目录是否存在
 * -e和!-e 判断文件或目录是否存在
 * -x和!-x 判断文件是否可执行
+
+
+Nginx 负载均衡
+
+### 轮询
+在http节点下，添加upstream节点
+``` conf
+    upstream app {
+        server 127.0.0.1:8080;
+        server 127.0.0.1:8081;
+    }
+```
+
+在server节点下的location节点中的proxy_pass配置改为以下
+``` conf
+    location / {
+        root html;
+        index index.html;
+        proxy_pass http://app;
+    }
+```
+
+现在一个简单的负载均衡初步完成，upstream默认按照轮询的方式进行负载，每个请求将按照时间顺序分配到不同的后端服务器，如果后端服务器down掉，能自动剔除。
+
+### weight权重
+``` conf 
+    upstream app {
+        server 127.0.0.1:8080 weight=5;
+        server 127.0.0.1:8081 weight=10;
+    }
+```
+现在127.0.0.1:8081的访问率将比127.0.0.1:8080访问率高一倍。
+
+### ip_hash
+
+``` conf 
+    upstream app {
+        ip_hash;
+        server 127.0.0.1:8080;
+        server 127.0.0.1:8081;
+    }
+```
+现在将按照ip的hash结果分配，每个访客将访问固定的一个后端服务器。
+
+
+### fair（第三方）
+``` conf
+    upstream app {
+        server 127.0.0.1:8080;
+        server 127.0.0.1:8081;
+        fair;
+    }
+```
+现在将按照后端响应时间来分配请求，响应时间低的优先分配。
+
+
+upstream还可以为每个设备设置状态值。
+* down 表示当前的server暂时不参与负载
+* weight 默认为1，weight越大，负载的权重就越大
+* max_fails 允许请求失败的次数默认为1.当超过最大次数时，返回proxy_next_upstream 模块定义的错误.
+* fail_timeout max_fails次失败后，暂停的时间。
+* backup 其它所有的非backup机器down或者忙的时候，请求backup机器。所以这台机器压力会最轻。
+
+示例
+``` conf
+    upstream bakend{
+        ip_hash;
+        server 127.0.0.1:9090 down;
+        server 127.0.0.1:8080 weight=2;
+        server 127.0.0.1:6060;
+        server 127.0.0.1:7070 backup;
+    }
+```
