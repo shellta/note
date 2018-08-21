@@ -247,3 +247,36 @@ EXEC                    | 执行所有事务块内的命令
 MULTI                   | 标记一个事务块的开始
 UNWATCH                 | 取消WATCH命令对所有key的监视
 WATCH key [key...]      | 监视一个或多个key，如果在事务执行之前这个key被其他命令所改变，则事务将打断
+
+
+### 读写锁实现
+``` php
+<?php
+
+$token = uniqid();
+
+// 一条命令上锁，并设置唯一值与过期时间，上锁方式为NX，即Not eXists
+function lock($token) {
+    return redis()->set('lock', $token, 'EX', 10, 'NX');
+}
+
+// 解锁使用Lua脚本执行，Redis执行Lua脚本具有原子性
+function unlock($token) {
+    $script = <<<LUA
+if ARGV[1] == redis.call('get', KEYS[1])
+then
+    return redis.call('del', KEYS[1])
+else
+    return 0
+end
+LUA;
+
+    return redis()->eval($script, 1, 'lock', $token);
+}
+
+if (lock($token)) {
+    // other code
+    unlock($token);
+}
+
+```
