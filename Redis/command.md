@@ -250,33 +250,108 @@ WATCH key [key...]      | 监视一个或多个key，如果在事务执行之前
 
 
 ### 读写锁实现
-``` php
+```php
+
 <?php
 
-$token = uniqid();
+class ReadWriteLock
+{
+    const rLock = 'lock:read:';
+    const wLock = 'lock:write:';
 
-// 一条命令上锁，并设置唯一值与过期时间，上锁方式为NX，即Not eXists
-function lock($token) {
-    return redis()->set('lock', $token, 'EX', 10, 'NX');
-}
+    public function readLock($key, $token)
+    {
+        // 判断当前是否有写操作
+        $script = <<<LUA
+if redis.call('GET', KEYS[1]) then
+    return 0
+else 
+    redis.call('HSET', KEYS[2], ARGV[1], 10)
+    redis.call('SET', ARGV[1], 10, 'EX', 10)
+    redis.call('EXPIRE', KEYS[2], 10)
+    return 1
+end
+LUA;
 
-// 解锁使用Lua脚本执行，Redis执行Lua脚本具有原子性
-function unlock($token) {
-    $script = <<<LUA
-if ARGV[1] == redis.call('get', KEYS[1])
+        return redis()->eval($script, 2, self::wLock . $key, self::rLock . $key, $token);
+    }
+
+    public function writeLock($key, $token)
+    {
+        // 判断当前是否有写或读操作
+        $script = <<<LUA
+if redis.call('GET', KEYS[1]) or redis.call('EXISTS', KEYS[2]) == 1 then
+    return 0
+else 
+    return redis.call('SET', KEYS[1], ARGV[1], 'EX', 10, 'NX')
+end
+LUA;
+
+        return redis()->eval($script, 2, self::wLock . $key, self::rLock . $key, $token);
+    }
+
+
+    public function unlockRead($key, $token)
+    {
+        $script = <<<LUA
+if redis.call('HEXISTS', KEYS[1], KEYS[2]) == false then
+    return
+end
+redis.call('HDEL', KEYS[1], KEYS[2])
+
+local e1 = redis.call('TTL', KEYS[1])
+local e2 = redis.call('TTL', KEYS[2])
+redis.call('DEL', KEYS[2])
+
+if e1 > e2 then
+    return 
+end
+
+local keys = redis.call("HKEYS", KEYS[1])
+local max = -2
+for k, v in pairs(keys) do
+    local t = redis.call('TTL', KEYS[2])
+    max = math.max(max, t)
+end
+
+if max > 0 then
+    redis.call('EXPIRE', KEYS[1], max)
+end
+LUA;
+
+        return redis()->eval($script, 2, self::rLock . $key, $token);
+    }
+
+    public function unlockWrite($key, $token)
+    {
+        $script = <<<LUA
+if ARGV[1] == redis.call('GET', KEYS[1])
 then
-    return redis.call('del', KEYS[1])
+    return redis.call('DEL', KEYS[1])
 else
     return 0
 end
 LUA;
 
-    return redis()->eval($script, 1, 'lock', $token);
+        return redis()->eval($script, 1, self::wLock . $key, $token);
+    }
 }
 
-if (lock($token)) {
-    // other code
-    unlock($token);
+$rw = new ReadWriteLock();
+
+$key = 'hello';
+$token = uniqid();
+
+
+if ($rw->readLock($key, $token)) {
+    redis()->get($key);
+    $rw->unlockRead($key, $token);
 }
+
+if ($rw->writeLock($key, $token)) {
+    redis()->set($key, 'abc');
+    $rw->unlockWrite($key, $token);
+}
+
 
 ```
